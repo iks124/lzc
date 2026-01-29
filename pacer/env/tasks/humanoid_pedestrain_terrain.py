@@ -51,6 +51,12 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         self.power_reward = cfg["env"].get("power_reward", False)
         self.power_coefficient = cfg["env"].get("power_coefficient", 0.0005)
         self.fuzzy_target = cfg["env"].get("fuzzy_target", False)
+        
+        # Z-axis constraint and stability parameters
+        self.upright_reward = cfg["env"].get("upright_reward", False)
+        self.upright_coefficient = cfg["env"].get("upright_coefficient", 0.3)
+        self.stability_reward = cfg["env"].get("stability_reward", False)
+        self.stability_coefficient = cfg["env"].get("stability_coefficient", 0.05)
 
 
         self.square_height_points = self.init_square_height_points()
@@ -81,7 +87,9 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
                          device_id=device_id,
                          headless=headless)
 
-        self.reward_raw = torch.zeros((self.num_envs, 2)).to(self.device)
+        # Track rewards: location, power, upright, stability
+        num_reward_components = 4
+        self.reward_raw = torch.zeros((self.num_envs, num_reward_components)).to(self.device)
 
         if (not self.headless) and self.show_sensors:
             self._build_sensor_state_tensors()
@@ -823,6 +831,8 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
 
     def _compute_reward(self, actions):
         root_pos = self._humanoid_root_states[..., 0:3]
+        root_rot = self._rigid_body_rot[:, 0, :]  # Root body rotation (quaternion)
+        root_ang_vel = self._rigid_body_ang_vel[:, 0, :]  # Root body angular velocity
 
         time = self.progress_buf * self.dt
         env_ids = torch.arange(self.num_envs, device=self.device, dtype=torch.long)
@@ -836,11 +846,27 @@ class HumanoidPedestrianTerrain(humanoid_traj.HumanoidTraj):
         # power_reward = -0.00005 * (power ** 2)
         power_reward = -self.power_coefficient * power
 
+        # Compute upright reward (penalize bending forward/backward)
+        upright_reward = torch.zeros_like(location_reward)
+        if self.upright_reward:
+            upright_reward = compute_upright_reward(root_rot) * self.upright_coefficient
+        
+        # Compute stability reward (penalize excessive rotation)
+        stability_reward = torch.zeros_like(location_reward)
+        if self.stability_reward:
+            stability_reward = compute_stability_reward(root_ang_vel) * self.stability_coefficient
+
+        # Combine all rewards
+        total_reward = location_reward
         if self.power_reward:
-            self.rew_buf[:] = location_reward + power_reward
-        else:
-            self.rew_buf[:] = location_reward
-        self.reward_raw[:] = torch.cat([location_reward[:, None], power_reward[:, None]], dim = -1)
+            total_reward = total_reward + power_reward
+        if self.upright_reward:
+            total_reward = total_reward + upright_reward
+        if self.stability_reward:
+            total_reward = total_reward + stability_reward
+            
+        self.rew_buf[:] = total_reward
+        self.reward_raw[:] = torch.stack([location_reward, power_reward, upright_reward, stability_reward], dim=-1)
 
         return
 
@@ -1521,6 +1547,51 @@ def compute_location_reward_fuzzy(root_pos, tar_pos):
     reward = pos_reward
 
     return reward
+
+@torch.jit.script
+def compute_upright_reward(root_rot):
+    # type: (Tensor) -> Tensor
+    """
+    Reward agent for maintaining upright posture (penalize bending forward/backward).
+    
+    The reward is based on how close the z-axis of the root body is to pointing upward.
+    For a quaternion [x, y, z, w], the z-axis direction in world coordinates is:
+    z_world = [2*(xz + wy), 2*(yz - wx), 1 - 2*(x^2 + y^2)]
+    
+    We want z_world[2] (the z-component) to be close to 1.0 (pointing up).
+    """
+    # Extract quaternion components
+    x, y, z, w = root_rot[:, 0], root_rot[:, 1], root_rot[:, 2], root_rot[:, 3]
+    
+    # Compute z-component of the up vector in world space
+    # For upright posture, this should be close to 1.0
+    z_up = 1.0 - 2.0 * (x * x + y * y)
+    
+    # Penalize deviation from upright (z_up should be ~1.0)
+    # Use exponential reward: exp(-k * (1 - z_up)^2)
+    upright_err_scale = 3.0
+    upright_err = (1.0 - z_up) * (1.0 - z_up)
+    upright_reward = torch.exp(-upright_err_scale * upright_err)
+    
+    return upright_reward
+
+@torch.jit.script
+def compute_stability_reward(root_ang_vel):
+    # type: (Tensor) -> Tensor
+    """
+    Reward agent for maintaining stable movement (penalize excessive rotation).
+    
+    Penalizes high angular velocities which indicate unstable/wobbly motion.
+    """
+    # Compute magnitude of angular velocity
+    ang_vel_mag = torch.sum(root_ang_vel * root_ang_vel, dim=-1)
+    
+    # Penalize high angular velocity
+    # Use exponential penalty: exp(-k * ang_vel_mag)
+    stability_err_scale = 0.2
+    stability_reward = torch.exp(-stability_err_scale * ang_vel_mag)
+    
+    return stability_reward
 
  
 
