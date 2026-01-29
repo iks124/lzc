@@ -1583,13 +1583,13 @@ def compute_stability_reward(root_ang_vel):
     
     Penalizes high angular velocities which indicate unstable/wobbly motion.
     """
-    # Compute magnitude of angular velocity
-    ang_vel_mag = torch.sum(root_ang_vel * root_ang_vel, dim=-1)
+    # Compute squared magnitude of angular velocity
+    ang_vel_sq_mag = torch.sum(root_ang_vel * root_ang_vel, dim=-1)
     
-    # Penalize high angular velocity
-    # Use exponential penalty: exp(-k * ang_vel_mag)
+    # Penalize high angular velocity using squared magnitude
+    # Use exponential penalty: exp(-k * ang_vel_sq_mag)
     stability_err_scale = 0.2
-    stability_reward = torch.exp(-stability_err_scale * ang_vel_mag)
+    stability_reward = torch.exp(-stability_err_scale * ang_vel_sq_mag)
     
     return stability_reward
 
