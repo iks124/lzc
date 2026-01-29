@@ -35,6 +35,13 @@ env:
   kp_scale: 1
   real_weight: True
   power_reward: True
+  power_coefficient: 0.0005
+  
+  # Z-axis constraint and stability rewards
+  upright_reward: True
+  upright_coefficient: 0.3
+  stability_reward: True
+  stability_coefficient: 0.05
 
   has_shape_obs: True
   has_shape_obs_disc: True

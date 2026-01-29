@@ -11,7 +11,7 @@ from env.tasks.humanoid_amp_getup import HumanoidAMPGetup
 from env.tasks.humanoid_traj import HumanoidTraj
 from env.tasks.humanoid_pedestrian import HumanoidPedestrian
 from env.tasks.humanoid_pedestrain_terrain import HumanoidPedestrianTerrain
-from pacer.env.tasks.humanoid_pedestrain_terrain_hand import HumanoidPedestrianTerrainHand
+from env.tasks.humanoid_pedestrain_terrain_hand import HumanoidPedestrianTerrainHand
 from env.tasks.humanoid_pedestrain_terrain_getup import HumanoidPedestrianTerrainGetup
 from env.tasks.vec_task_wrappers import VecTaskPythonWrapper
 
